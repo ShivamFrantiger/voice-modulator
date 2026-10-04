@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
 
@@ -18,44 +18,91 @@ interface StatusInfo {
 }
 
 export default function DialerPage() {
+  const [callerNumber, setCallerNumber] = useState("");
   const [clientNumber, setClientNumber] = useState("");
   const [status, setStatus] = useState<Status>("idle");
   const [message, setMessage] = useState("");
   const [serverInfo, setServerInfo] = useState<StatusInfo | null>(null);
   const [elapsed, setElapsed] = useState(0);
+  const [isPlayingSample, setIsPlayingSample] = useState(false);
+
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollRef  = useRef<ReturnType<typeof setInterval> | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Load saved caller number on client mount
+  useEffect(() => {
+    const saved = localStorage.getItem("guruji_caller_number");
+    if (saved) setCallerNumber(saved);
+  }, []);
+
+  const handleCallerChange = (val: string) => {
+    let clean = val.replace(/\D/g, "");
+    if (clean.startsWith("91") && clean.length > 10) clean = clean.slice(2);
+    if (clean.startsWith("0")) clean = clean.replace(/^0+/, "");
+    const formatted = clean.slice(0, 10);
+    setCallerNumber(formatted);
+    localStorage.setItem("guruji_caller_number", formatted);
+  };
 
   // ── Poll server status ──────────────────────────────────────────────────────
   const pollStatus = useCallback(async () => {
     try {
-      const res = await fetch("/api/prepare-call");
+      const url = callerNumber 
+        ? `/api/prepare-call?callerNumber=${encodeURIComponent("+91" + callerNumber)}`
+        : "/api/prepare-call";
+      const res = await fetch(url);
       if (!res.ok) return;
       const data: StatusInfo = await res.json();
       setServerInfo(data);
 
       if (data.activeCalls && data.activeCalls > 0 && status === "ready") {
         setStatus("calling");
-        setMessage("Client is ringing…");
+        setMessage("Recipient phone is ringing…");
       }
       if (data.activeCalls === 0 && status === "connected") {
         setStatus("ended");
-        setMessage("Call ended.");
+        setMessage("Divine connection completed.");
         stopTimer();
       }
     } catch {}
-  }, [status]);
+  }, [status, callerNumber]);
 
   useEffect(() => {
     pollRef.current = setInterval(pollStatus, 3000);
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [pollStatus]);
 
+  // ── Audio Sample toggle ──────────────────────────────────────────────────────
+  const toggleAudioSample = () => {
+    if (!audioRef.current) {
+      audioRef.current = new Audio("/guruji15.mp3");
+      audioRef.current.onended = () => setIsPlayingSample(false);
+    }
+
+    if (isPlayingSample) {
+      audioRef.current.pause();
+      setIsPlayingSample(false);
+    } else {
+      audioRef.current.play().catch(() => {});
+      setIsPlayingSample(true);
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+      }
+    };
+  }, []);
+
   // ── Timer helpers ───────────────────────────────────────────────────────────
   const startTimer = () => {
     setElapsed(0);
     timerRef.current = setInterval(() => setElapsed((s) => s + 1), 1000);
   };
+
   const stopTimer = () => {
     if (timerRef.current) clearInterval(timerRef.current);
   };
@@ -67,45 +114,65 @@ export default function DialerPage() {
   };
 
   // ── Actions ─────────────────────────────────────────────────────────────────
+  const PLIVO_NUMBER = "+918031906171";
+
   const handlePrepare = async () => {
-    if (!clientNumber.trim()) {
-      setMessage("Please enter a client phone number.");
+    const rawCaller = callerNumber.replace(/\D/g, "");
+    const rawClient = clientNumber.replace(/\D/g, "");
+
+    if (!rawCaller) {
+      setMessage("Please enter your valid caller phone number.");
       return;
     }
+    if (!rawClient) {
+      setMessage("Please enter a valid recipient phone number.");
+      return;
+    }
+
+    const fullCallerNumber = `+91${rawCaller}`;
+    const fullClientNumber = `+91${rawClient}`;
+
     setStatus("calling");
-    setMessage("Registering…");
+    setMessage("Registering caller & recipient for Guruji's voice call…");
     try {
       const res = await fetch("/api/prepare-call", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ clientNumber: clientNumber.trim() }),
+        body: JSON.stringify({
+          clientNumber: fullClientNumber,
+          callerNumber: fullCallerNumber,
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
         setStatus("error");
-        setMessage(data.error || "Failed to register.");
+        setMessage(data.error || "Failed to register call.");
         return;
       }
       setStatus("ready");
-      setMessage("Ready! Now dial the Plivo number from your phone.");
+      setMessage("Registered! Opening phone dialer for divine call…");
+
+      // Redirect to phone dialer app with Plivo number pre-loaded
+      window.location.href = `tel:${PLIVO_NUMBER}`;
     } catch {
       setStatus("error");
-      setMessage("Could not reach the voice server.");
+      setMessage("Could not reach the divine voice server.");
     }
   };
 
-  const handleCancel = async () => {
+  const handleEndCall = async () => {
+    setMessage("Ending divine call connection…");
     try {
-      await fetch("/api/prepare-call", { method: "DELETE" });
+      await fetch("/api/end-call", { method: "POST" });
     } catch {}
-    setStatus("idle");
-    setMessage("");
+    setStatus("ended");
+    setMessage("Call completed in peace & grace.");
     stopTimer();
   };
 
   const handleMarkConnected = () => {
     setStatus("connected");
-    setMessage("Call active — your voice is being modulated.");
+    setMessage("Vani Active — speaking in Guruji's serene voice.");
     startTimer();
   };
 
@@ -117,199 +184,346 @@ export default function DialerPage() {
     stopTimer();
   };
 
-  // ── Render ───────────────────────────────────────────────────────────────────
+  // ── Render Helpers ──────────────────────────────────────────────────────────
   const statusColors: Record<Status, string> = {
-    idle:      "text-zinc-400",
-    ready:     "text-amber-400",
-    calling:   "text-sky-400",
-    connected: "text-emerald-400",
-    ended:     "text-zinc-400",
-    error:     "text-rose-400",
+    idle:      "text-amber-200/70",
+    ready:     "text-amber-400 font-semibold",
+    calling:   "text-sky-300 font-semibold",
+    connected: "text-emerald-400 font-bold",
+    ended:     "text-amber-200/70",
+    error:     "text-rose-400 font-semibold",
   };
 
   const statusDots: Record<Status, string> = {
-    idle:      "bg-zinc-600",
-    ready:     "bg-amber-400 animate-pulse",
-    calling:   "bg-sky-400 animate-pulse",
-    connected: "bg-emerald-400",
-    ended:     "bg-zinc-600",
-    error:     "bg-rose-500",
+    idle:      "bg-amber-500/40 border border-amber-400/50",
+    ready:     "bg-amber-400 animate-pulse shadow-[0_0_12px_rgba(251,191,36,0.8)]",
+    calling:   "bg-sky-400 animate-pulse shadow-[0_0_12px_rgba(56,189,248,0.8)]",
+    connected: "bg-emerald-400 animate-pulse shadow-[0_0_15px_rgba(52,211,153,0.9)]",
+    ended:     "bg-stone-500",
+    error:     "bg-rose-500 shadow-[0_0_12px_rgba(244,63,94,0.8)]",
   };
 
   return (
-    <div className="min-h-screen bg-[#0a0a0f] text-white flex flex-col items-center justify-center p-6 font-sans">
+    <div className="min-h-screen bg-[#090713] text-amber-50 flex flex-col items-center justify-center p-4 sm:p-6 font-sans relative overflow-hidden selection:bg-amber-500/30 selection:text-amber-200">
 
-      {/* Ambient glow */}
+      {/* Sacred Halo Ambient Glows */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-96 h-96 bg-violet-700/20 rounded-full blur-[120px]" />
-        <div className="absolute bottom-1/3 left-1/4 w-64 h-64 bg-sky-700/15 rounded-full blur-[100px]" />
+        <div className="absolute top-10 left-1/2 -translate-x-1/2 w-[500px] h-[500px] bg-gradient-to-b from-amber-600/15 via-orange-600/10 to-transparent rounded-full blur-[140px] animate-pulse" />
+        <div className="absolute bottom-10 left-1/4 w-80 h-80 bg-gradient-to-t from-indigo-900/20 via-amber-700/10 to-transparent rounded-full blur-[120px]" />
+        <div className="absolute top-1/3 right-1/4 w-72 h-72 bg-amber-500/5 rounded-full blur-[100px]" />
       </div>
 
-      <div className="relative w-full max-w-md">
+      <div className="relative w-full max-w-md z-10 space-y-6">
 
-        {/* Header */}
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-violet-500/10 border border-violet-500/20 text-violet-300 text-xs font-medium mb-4">
-            <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse" />
-            Voice Modulator
+        {/* Spiritual Branding Header */}
+        <div className="text-center space-y-3">
+          <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-medium tracking-wide shadow-[0_0_15px_rgba(245,158,11,0.1)]">
+            <span className="text-amber-400 text-sm">ॐ</span>
+            <span>Guruji Real-Time Voice Transformation</span>
           </div>
-          <h1 className="text-3xl font-bold bg-gradient-to-br from-white to-zinc-400 bg-clip-text text-transparent">
-            Outbound Dialer
+
+          <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight bg-gradient-to-r from-amber-100 via-amber-300 to-orange-200 bg-clip-text text-transparent drop-shadow-sm">
+            Guruji Vani
           </h1>
-          <p className="mt-2 text-zinc-500 text-sm">
-            Register a client number, then dial the Plivo line from your phone.
+
+          <p className="text-amber-200/70 text-xs sm:text-sm max-w-xs mx-auto leading-relaxed">
+            Transform your spoken words into the serene, revered voice of Guruji in real-time.
           </p>
+
+          {/* Peaceful Banner */}
+          <div className="pt-1">
+            <span className="text-[11px] font-serif italic text-amber-300/80 bg-amber-500/5 px-3 py-1 rounded-lg border border-amber-500/10">
+              “Speak with calm, spread peace and wisdom.”
+            </span>
+          </div>
         </div>
 
-        {/* Main card */}
-        <div className="bg-white/[0.04] border border-white/[0.07] rounded-2xl p-6 shadow-2xl backdrop-blur-sm">
+        {/* Main Sacred Card */}
+        <div className="bg-[#131024]/80 border border-amber-500/20 rounded-3xl p-6 sm:p-7 shadow-[0_10px_40px_rgba(0,0,0,0.5),0_0_30px_rgba(245,158,11,0.06)] backdrop-blur-xl transition-all">
 
-          {/* Status indicator */}
-          <div className="flex items-center gap-2 mb-6">
-            <span className={`w-2 h-2 rounded-full ${statusDots[status]}`} />
-            <span className={`text-sm font-medium ${statusColors[status]}`}>
-              {status === "idle"      && "Idle — enter a number to begin"}
-              {status === "ready"     && "Ready — dial the Plivo number now"}
-              {status === "calling"   && "Initiating call…"}
-              {status === "connected" && `Connected · ${formatTime(elapsed)}`}
-              {status === "ended"     && "Call ended"}
-              {status === "error"     && "Error"}
-            </span>
+          {/* Status Indicator Bar */}
+          <div className="flex items-center justify-between pb-4 mb-5 border-b border-amber-500/15">
+            <div className="flex items-center gap-2.5">
+              <span className={`w-2.5 h-2.5 rounded-full ${statusDots[status]}`} />
+              <span className={`text-xs sm:text-sm ${statusColors[status]}`}>
+                {status === "idle"      && "Ready — enter mobile numbers"}
+                {status === "ready"     && "Primed — dial Plivo line now"}
+                {status === "calling"   && "Initiating sacred connection…"}
+                {status === "connected" && `Vani Active · ${formatTime(elapsed)}`}
+                {status === "ended"     && "Call completed in peace"}
+                {status === "error"     && "Connection error"}
+              </span>
+            </div>
+
             {serverInfo && (
-              <span className="ml-auto text-xs text-zinc-600">
+              <span className="text-[11px] px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-300/80 border border-amber-500/15">
                 {serverInfo.activeCalls ?? 0} active
               </span>
             )}
           </div>
 
-          {/* Phone input */}
+          {/* ── IDLE / ERROR STATE ───────────────────────────────────────────────── */}
           {(status === "idle" || status === "error") && (
-            <div className="space-y-4">
+            <div className="space-y-5">
+              {/* Your Phone Number (Caller) */}
               <div>
-                <label className="block text-xs text-zinc-400 mb-1.5 font-medium">
-                  Client Phone Number
+                <label className="block text-xs text-amber-200/80 mb-2 font-medium tracking-wide flex justify-between items-center">
+                  <span>Your Mobile Number (Caller)</span>
+                  <span className="text-[10px] text-amber-400/60 font-normal">Auto-saved</span>
                 </label>
-                <input
-                  id="client-number-input"
-                  type="tel"
-                  placeholder="+91 98765 43210"
-                  value={clientNumber}
-                  onChange={(e) => setClientNumber(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handlePrepare()}
-                  className="w-full bg-white/[0.06] border border-white/10 rounded-xl px-4 py-3 text-white placeholder-zinc-600 text-sm focus:outline-none focus:border-violet-500/60 focus:ring-1 focus:ring-violet-500/30 transition-all"
-                />
+                <div className="flex rounded-2xl overflow-hidden border border-amber-500/30 bg-[#0d0a1a] focus-within:border-amber-400 focus-within:ring-2 focus-within:ring-amber-500/20 transition-all shadow-inner">
+                  <span className="inline-flex items-center px-4 bg-amber-500/15 text-amber-300 font-semibold text-sm border-r border-amber-500/20 select-none">
+                    🇮🇳 +91
+                  </span>
+                  <input
+                    id="caller-number-input"
+                    type="tel"
+                    placeholder="Your 10-digit mobile number"
+                    maxLength={10}
+                    value={callerNumber}
+                    onChange={(e) => handleCallerChange(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handlePrepare()}
+                    className="w-full bg-transparent px-4 py-3.5 text-amber-100 placeholder-amber-900/60 text-sm focus:outline-none font-mono tracking-wider"
+                  />
+                </div>
+              </div>
+
+              {/* Recipient Phone Number */}
+              <div>
+                <label className="block text-xs text-amber-200/80 mb-2 font-medium tracking-wide">
+                  Recipient / Devotee Mobile Number
+                </label>
+                <div className="flex rounded-2xl overflow-hidden border border-amber-500/30 bg-[#0d0a1a] focus-within:border-amber-400 focus-within:ring-2 focus-within:ring-amber-500/20 transition-all shadow-inner">
+                  <span className="inline-flex items-center px-4 bg-amber-500/15 text-amber-300 font-semibold text-sm border-r border-amber-500/20 select-none">
+                    🇮🇳 +91
+                  </span>
+                  <input
+                    id="client-number-input"
+                    type="tel"
+                    placeholder="98765 43210"
+                    maxLength={10}
+                    value={clientNumber}
+                    onChange={(e) => {
+                      let val = e.target.value.replace(/\D/g, "");
+                      if (val.startsWith("91") && val.length > 10) val = val.slice(2);
+                      if (val.startsWith("0")) val = val.replace(/^0+/, "");
+                      setClientNumber(val.slice(0, 10));
+                    }}
+                    onKeyDown={(e) => e.key === "Enter" && handlePrepare()}
+                    className="w-full bg-transparent px-4 py-3.5 text-amber-100 placeholder-amber-900/60 text-sm focus:outline-none font-mono tracking-wider"
+                  />
+                </div>
               </div>
 
               {message && (
-                <p className="text-xs text-rose-400">{message}</p>
+                <p className="text-xs text-rose-400 bg-rose-500/10 p-2.5 rounded-xl border border-rose-500/20 text-center">
+                  {message}
+                </p>
               )}
+
+              {/* Guruji Sample Voice Player */}
+              <div className="p-3.5 rounded-2xl bg-amber-500/5 border border-amber-500/15 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={toggleAudioSample}
+                    className="w-9 h-9 rounded-full bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 flex items-center justify-center transition-all border border-amber-500/40 active:scale-95"
+                    title="Listen to Guruji's Voice Sample"
+                  >
+                    {isPlayingSample ? (
+                      <span className="text-xs font-bold">❚❚</span>
+                    ) : (
+                      <span className="text-xs ml-0.5">▶</span>
+                    )}
+                  </button>
+                  <div>
+                    <div className="text-xs font-semibold text-amber-200">Guruji Voice Sample</div>
+                    <div className="text-[10px] text-amber-300/60">
+                      {isPlayingSample ? "Playing audio..." : "Tap to preview voice"}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Animated Waveform indicator */}
+                {isPlayingSample && (
+                  <div className="flex items-center gap-0.5 h-4">
+                    <span className="w-1 bg-amber-400 h-full animate-bounce rounded-full" />
+                    <span className="w-1 bg-amber-300 h-2/3 animate-bounce delay-75 rounded-full" />
+                    <span className="w-1 bg-amber-500 h-5/6 animate-bounce delay-150 rounded-full" />
+                  </div>
+                )}
+              </div>
 
               <button
                 id="prepare-call-btn"
                 onClick={handlePrepare}
-                disabled={!clientNumber.trim()}
-                className="w-full py-3 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed font-semibold text-sm transition-all active:scale-[0.98] shadow-lg shadow-violet-900/30"
+                disabled={!clientNumber.trim() || !callerNumber.trim()}
+                className="w-full py-4 rounded-2xl bg-gradient-to-r from-amber-500 via-amber-400 to-orange-500 hover:from-amber-400 hover:to-orange-400 disabled:opacity-30 disabled:cursor-not-allowed font-bold text-stone-950 text-sm tracking-wide transition-all active:scale-[0.98] shadow-lg shadow-amber-900/30 flex items-center justify-center gap-2"
               >
-                Prepare Call
+                <span>✨ Initiate Guruji Voice Call</span>
               </button>
             </div>
           )}
 
-          {/* Ready state */}
-          {status === "ready" && (
-            <div className="space-y-4">
-              <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-4 text-center">
-                <p className="text-amber-300 text-sm font-medium mb-1">
-                  📞 Dial the Plivo number now
-                </p>
-                <p className="text-zinc-400 text-xs">
-                  Calling: <span className="text-white font-mono">{clientNumber}</span>
+          {/* ── CALLING / RINGING STATE ─────────────────────────────────────────── */}
+          {status === "calling" && (
+            <div className="space-y-5">
+              <div className="bg-sky-500/10 border border-sky-500/20 rounded-2xl p-5 text-center space-y-3 relative overflow-hidden">
+                <div className="absolute inset-0 bg-sky-500/5 animate-pulse" />
+                <div className="relative z-10 flex items-center justify-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-sky-400 animate-ping" />
+                  <span className="text-sky-300 text-sm font-semibold">
+                    {message || "Initiating divine connection…"}
+                  </span>
+                </div>
+                <p className="relative z-10 text-xs text-amber-200/70">
+                  Ringing Recipient: <span className="text-white font-mono font-semibold">+91 {clientNumber}</span>
                 </p>
               </div>
 
-              <p className="text-xs text-zinc-500 text-center">{message}</p>
+              <div className="flex gap-3">
+                <button
+                  id="mark-connected-calling-btn"
+                  onClick={handleMarkConnected}
+                  className="flex-1 py-3.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 hover:bg-emerald-500/25 text-emerald-300 text-xs sm:text-sm font-semibold transition-all"
+                >
+                  Mark Connected
+                </button>
+                <button
+                  id="end-call-calling-btn"
+                  onClick={handleEndCall}
+                  className="flex-1 py-3.5 rounded-xl bg-rose-500/15 border border-rose-500/30 hover:bg-rose-500/25 text-rose-300 text-xs sm:text-sm font-semibold transition-all"
+                >
+                  End Call
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ── READY STATE ─────────────────────────────────────────────────────── */}
+          {status === "ready" && (
+            <div className="space-y-5">
+              <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-5 text-center space-y-3">
+                <div className="text-amber-300 text-sm font-semibold flex items-center justify-center gap-2">
+                  <span className="text-lg">📞</span>
+                  <span>Dial Plivo Line Now</span>
+                </div>
+                <p className="text-amber-200/70 text-xs">
+                  Registered Recipient: <span className="text-amber-100 font-mono font-semibold">+91 {clientNumber}</span>
+                </p>
+                
+                <a
+                  href={`tel:${PLIVO_NUMBER}`}
+                  className="inline-flex items-center justify-center gap-2 w-full py-4 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-bold text-sm shadow-lg shadow-emerald-900/30 transition-all active:scale-[0.98]"
+                >
+                  <span>📞 Call Plivo Line ({PLIVO_NUMBER})</span>
+                </a>
+              </div>
+
+              <p className="text-xs text-amber-300/60 text-center">{message}</p>
 
               <div className="flex gap-3">
                 <button
                   id="mark-connected-btn"
                   onClick={handleMarkConnected}
-                  className="flex-1 py-2.5 rounded-xl bg-emerald-600/20 border border-emerald-500/30 hover:bg-emerald-600/30 text-emerald-300 text-sm font-medium transition-all"
+                  className="flex-1 py-3.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 hover:bg-emerald-500/25 text-emerald-300 text-xs sm:text-sm font-semibold transition-all"
                 >
                   Mark Connected
                 </button>
                 <button
                   id="cancel-ready-btn"
-                  onClick={handleCancel}
-                  className="flex-1 py-2.5 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 text-zinc-400 text-sm font-medium transition-all"
+                  onClick={handleEndCall}
+                  className="flex-1 py-3.5 rounded-xl bg-rose-500/15 border border-rose-500/30 hover:bg-rose-500/25 text-rose-300 text-xs sm:text-sm font-semibold transition-all"
                 >
-                  Cancel
+                  Cancel Call
                 </button>
               </div>
             </div>
           )}
 
-          {/* Connected state */}
+          {/* ── CONNECTED STATE ─────────────────────────────────────────────────── */}
           {status === "connected" && (
-            <div className="space-y-4">
-              <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-5 text-center">
-                <div className="flex items-center justify-center gap-2 mb-2">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                  <span className="text-emerald-300 text-sm font-semibold">Call Active</span>
+            <div className="space-y-5">
+              <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-2xl p-6 text-center space-y-3 relative overflow-hidden">
+                {/* Aura Pulse Ring */}
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                  <div className="w-32 h-32 rounded-full bg-emerald-500/10 animate-ping" />
                 </div>
-                <p className="text-3xl font-mono font-bold text-white">{formatTime(elapsed)}</p>
-                <p className="text-xs text-zinc-500 mt-2">
-                  Client: <span className="text-zinc-300 font-mono">{clientNumber}</span>
+
+                <div className="relative z-10 flex items-center justify-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+                  <span className="text-emerald-300 text-sm font-bold tracking-wide">
+                    Guruji Voice Active
+                  </span>
+                </div>
+
+                <div className="relative z-10 text-4xl font-mono font-extrabold text-amber-200 tracking-wider">
+                  {formatTime(elapsed)}
+                </div>
+
+                <p className="relative z-10 text-xs text-amber-200/70">
+                  Speaking to Recipient: <span className="text-amber-100 font-mono font-semibold">+91 {clientNumber}</span>
                 </p>
               </div>
 
-              <div className="grid grid-cols-2 gap-3 text-xs text-center text-zinc-500">
-                <div className="bg-white/[0.04] rounded-lg p-3">
-                  <div className="text-emerald-400 font-medium mb-0.5">Your voice</div>
-                  <div>Modulated → Client</div>
+              {/* Real-time Conduit Status */}
+              <div className="grid grid-cols-2 gap-3 text-xs text-center">
+                <div className="bg-amber-500/5 border border-amber-500/10 rounded-xl p-3">
+                  <div className="text-amber-400 font-semibold mb-1">Your Voice</div>
+                  <div className="text-amber-200/70">Modulated ➔ Guruji</div>
                 </div>
-                <div className="bg-white/[0.04] rounded-lg p-3">
-                  <div className="text-sky-400 font-medium mb-0.5">Client voice</div>
-                  <div>Raw → You</div>
+                <div className="bg-amber-500/5 border border-amber-500/10 rounded-xl p-3">
+                  <div className="text-sky-400 font-semibold mb-1">Recipient Voice</div>
+                  <div className="text-amber-200/70">Raw Audio ➔ You</div>
                 </div>
               </div>
 
               <button
                 id="end-call-btn"
-                onClick={handleCancel}
-                className="w-full py-3 rounded-xl bg-rose-600/20 border border-rose-500/30 hover:bg-rose-600/30 text-rose-300 text-sm font-semibold transition-all"
+                onClick={handleEndCall}
+                className="w-full py-4 rounded-2xl bg-rose-500/15 border border-rose-500/30 hover:bg-rose-500/25 text-rose-300 font-bold text-sm transition-all flex items-center justify-center gap-2 shadow-lg shadow-rose-950/20 active:scale-[0.98]"
               >
-                End Call
+                <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+                <span>End Divine Call</span>
               </button>
             </div>
           )}
 
-          {/* Ended state */}
-          {(status === "ended") && (
-            <div className="space-y-4 text-center">
-              <p className="text-zinc-400 text-sm">{message || "Call ended."}</p>
+          {/* ── ENDED STATE ─────────────────────────────────────────────────────── */}
+          {status === "ended" && (
+            <div className="space-y-5 text-center py-2">
+              <div className="w-12 h-12 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-300 flex items-center justify-center mx-auto text-xl">
+                🙏
+              </div>
+              <div>
+                <h3 className="text-amber-200 font-bold text-base">Call Completed in Grace</h3>
+                <p className="text-amber-200/60 text-xs mt-1">{message || "The divine voice session has ended."}</p>
+              </div>
               <button
                 id="new-call-btn"
                 onClick={handleReset}
-                className="w-full py-3 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 font-semibold text-sm transition-all"
+                className="w-full py-4 rounded-2xl bg-gradient-to-r from-amber-500 via-amber-400 to-orange-500 hover:from-amber-400 hover:to-orange-400 font-bold text-stone-950 text-sm transition-all shadow-lg shadow-amber-900/30 active:scale-[0.98]"
               >
-                New Call
+                Initiate New Guruji Call
               </button>
             </div>
           )}
         </div>
 
-        {/* Flow diagram */}
-        <div className="mt-6 flex items-center justify-center gap-1 text-[10px] text-zinc-600 flex-wrap">
-          <span className="text-zinc-400">Your Phone</span>
-          <span>→</span>
-          <span>Plivo</span>
-          <span>→</span>
-          <span>Server</span>
-          <span>→</span>
-          <span>ElevenLabs S2S</span>
-          <span>→</span>
-          <span className="text-zinc-400">Client Phone</span>
+        {/* Sacred Flow Diagram Footer */}
+        <div className="pt-2 text-center">
+          <div className="inline-flex items-center justify-center gap-1.5 text-[11px] text-amber-300/50 flex-wrap bg-amber-500/5 px-4 py-2 rounded-xl border border-amber-500/10">
+            <span className="text-amber-300/80">Your Phone</span>
+            <span>➔</span>
+            <span>Plivo</span>
+            <span>➔</span>
+            <span>Voice Server</span>
+            <span>➔</span>
+            <span className="text-amber-400 font-semibold">Guruji S2S</span>
+            <span>➔</span>
+            <span className="text-amber-300/80">Recipient</span>
+          </div>
         </div>
+
       </div>
     </div>
   );

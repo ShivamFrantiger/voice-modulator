@@ -1,17 +1,17 @@
-﻿import { NextResponse, NextRequest } from "next/server";
+import { NextResponse, NextRequest } from "next/server";
 
 const VOICE_SERVER_URL = process.env.VOICE_SERVER_URL;
 
-/** POST /api/prepare-call — register client number */
+/** POST /api/prepare-call — register client number and caller number */
 export async function POST(request: NextRequest) {
   if (!VOICE_SERVER_URL) {
     return NextResponse.json({ error: "VOICE_SERVER_URL env var is not set" }, { status: 500 });
   }
-  let body: { clientNumber?: string };
+  let body: { clientNumber?: string; callerNumber?: string };
   try { body = await request.json(); } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
-  const { clientNumber } = body;
+  const { clientNumber, callerNumber } = body;
   if (!clientNumber) {
     return NextResponse.json({ error: "clientNumber is required" }, { status: 400 });
   }
@@ -19,7 +19,7 @@ export async function POST(request: NextRequest) {
     const res = await fetch(`${VOICE_SERVER_URL}/api/prepare-call`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ clientNumber }),
+      body: JSON.stringify({ clientNumber, callerNumber }),
     });
     const data = await res.json();
     return NextResponse.json(data, { status: res.status });
@@ -30,12 +30,16 @@ export async function POST(request: NextRequest) {
 }
 
 /** GET /api/prepare-call — check pending call status */
-export async function GET() {
+export async function GET(request: NextRequest) {
   if (!VOICE_SERVER_URL) {
     return NextResponse.json({ error: "VOICE_SERVER_URL env var is not set" }, { status: 500 });
   }
+  const callerNumber = request.nextUrl.searchParams.get("callerNumber");
+  const targetUrl = callerNumber 
+    ? `${VOICE_SERVER_URL}/api/prepare-call/status?callerNumber=${encodeURIComponent(callerNumber)}`
+    : `${VOICE_SERVER_URL}/api/prepare-call/status`;
   try {
-    const res = await fetch(`${VOICE_SERVER_URL}/api/prepare-call/status`);
+    const res = await fetch(targetUrl);
     const data = await res.json();
     return NextResponse.json(data, { status: res.status });
   } catch (err) {

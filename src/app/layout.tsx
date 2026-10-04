@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Voice Modulator — Outbound Dialer",
-  description: "Pre-register a client number and dial them with your voice modulated via ElevenLabs S2S.",
+  title: "Guruji Vani — Divine Voice Modulator",
+  description: "Transform your spoken voice into the peaceful, revered voice of Guruji in real-time.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
