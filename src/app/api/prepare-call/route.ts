@@ -7,11 +7,11 @@ export async function POST(request: NextRequest) {
   if (!VOICE_SERVER_URL) {
     return NextResponse.json({ error: "VOICE_SERVER_URL env var is not set" }, { status: 500 });
   }
-  let body: { clientNumber?: string; callerNumber?: string };
+  let body: { clientNumber?: string; callerNumber?: string; engine?: string };
   try { body = await request.json(); } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
-  const { clientNumber, callerNumber } = body;
+  const { clientNumber, callerNumber, engine } = body;
   if (!clientNumber) {
     return NextResponse.json({ error: "clientNumber is required" }, { status: 400 });
   }
@@ -19,7 +19,7 @@ export async function POST(request: NextRequest) {
     const res = await fetch(`${VOICE_SERVER_URL}/api/prepare-call`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ clientNumber, callerNumber }),
+      body: JSON.stringify({ clientNumber, callerNumber, engine }),
     });
     const data = await res.json();
     return NextResponse.json(data, { status: res.status });

@@ -10,16 +10,21 @@ type Status =
   | "ended"
   | "error";
 
+type EngineType = "elevenlabs" | "sarvam";
+
 interface StatusInfo {
   pending: boolean;
   clientNumber?: string;
   activeCalls?: number;
   expiresInMs?: number;
+  engine?: string;
+  currentEngine?: string;
 }
 
 export default function DialerPage() {
   const [callerNumber, setCallerNumber] = useState("");
   const [clientNumber, setClientNumber] = useState("");
+  const [selectedEngine, setSelectedEngine] = useState<EngineType>("elevenlabs");
   const [status, setStatus] = useState<Status>("idle");
   const [message, setMessage] = useState("");
   const [serverInfo, setServerInfo] = useState<StatusInfo | null>(null);
@@ -30,11 +35,31 @@ export default function DialerPage() {
   const pollRef  = useRef<ReturnType<typeof setInterval> | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  // Load saved caller number on client mount
+  // Load saved caller number and engine on client mount
   useEffect(() => {
     const saved = localStorage.getItem("guruji_caller_number");
     if (saved) setCallerNumber(saved);
+
+    const savedEngine = localStorage.getItem("guruji_voice_engine") as EngineType | null;
+    if (savedEngine === "elevenlabs" || savedEngine === "sarvam") {
+      setSelectedEngine(savedEngine);
+    } else {
+      // Fetch server default if no local preference
+      fetch("/api/engine")
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.currentEngine === "elevenlabs" || data.currentEngine === "sarvam") {
+            setSelectedEngine(data.currentEngine);
+          }
+        })
+        .catch(() => {});
+    }
   }, []);
+
+  const handleEngineChange = (engine: EngineType) => {
+    setSelectedEngine(engine);
+    localStorage.setItem("guruji_voice_engine", engine);
+  };
 
   const handleCallerChange = (val: string) => {
     let clean = val.replace(/\D/g, "");
@@ -133,7 +158,7 @@ export default function DialerPage() {
     const fullClientNumber = `+91${rawClient}`;
 
     setStatus("calling");
-    setMessage("Registering caller & recipient for Guruji's voice call…");
+    setMessage(`Registering caller & recipient (${selectedEngine === "elevenlabs" ? "ElevenLabs S2S" : "Sarvam AI"})…`);
     try {
       const res = await fetch("/api/prepare-call", {
         method: "POST",
@@ -141,6 +166,7 @@ export default function DialerPage() {
         body: JSON.stringify({
           clientNumber: fullClientNumber,
           callerNumber: fullCallerNumber,
+          engine:       selectedEngine,
         }),
       });
       const data = await res.json();
@@ -255,16 +281,81 @@ export default function DialerPage() {
               </span>
             </div>
 
-            {serverInfo && (
-              <span className="text-[11px] px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-300/80 border border-amber-500/15">
-                {serverInfo.activeCalls ?? 0} active
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-300/80 border border-amber-500/15 font-mono uppercase">
+                {selectedEngine === "elevenlabs" ? "ElevenLabs" : "Sarvam"}
               </span>
-            )}
+              {serverInfo && (
+                <span className="text-[11px] px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-300/80 border border-amber-500/15">
+                  {serverInfo.activeCalls ?? 0} active
+                </span>
+              )}
+            </div>
           </div>
 
           {/* ── IDLE / ERROR STATE ───────────────────────────────────────────────── */}
           {(status === "idle" || status === "error") && (
             <div className="space-y-5">
+              {/* Voice Modulation Engine Selector */}
+              <div>
+                <div className="flex justify-between items-center mb-2">
+                  <label className="text-xs text-amber-200/80 font-medium tracking-wide">
+                    Modulation AI Engine
+                  </label>
+                  <span className="text-[10px] text-amber-400/70 font-mono">
+                    {selectedEngine === "elevenlabs" ? "Speech-to-Speech" : "Saaras STT + Bulbul TTS"}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2.5 p-1 bg-[#0d0a1a] rounded-2xl border border-amber-500/20 shadow-inner">
+                  <button
+                    id="engine-elevenlabs-btn"
+                    type="button"
+                    onClick={() => handleEngineChange("elevenlabs")}
+                    className={`relative p-3 rounded-xl text-left transition-all flex flex-col justify-between ${
+                      selectedEngine === "elevenlabs"
+                        ? "bg-gradient-to-br from-amber-500/20 via-amber-600/15 to-transparent border border-amber-400/60 shadow-[0_0_15px_rgba(245,158,11,0.15)] text-amber-100"
+                        : "bg-transparent border border-transparent text-amber-200/50 hover:text-amber-200/80 hover:bg-amber-500/5"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between w-full mb-1">
+                      <span className="text-xs font-bold tracking-wide">ElevenLabs</span>
+                      {selectedEngine === "elevenlabs" ? (
+                        <span className="w-2 h-2 rounded-full bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.9)]" />
+                      ) : (
+                        <span className="text-[10px] text-amber-500/40">Select</span>
+                      )}
+                    </div>
+                    <span className="text-[10px] leading-tight text-amber-200/70">
+                      Real-time S2S · tone preservation
+                    </span>
+                  </button>
+
+                  <button
+                    id="engine-sarvam-btn"
+                    type="button"
+                    onClick={() => handleEngineChange("sarvam")}
+                    className={`relative p-3 rounded-xl text-left transition-all flex flex-col justify-between ${
+                      selectedEngine === "sarvam"
+                        ? "bg-gradient-to-br from-amber-500/20 via-amber-600/15 to-transparent border border-amber-400/60 shadow-[0_0_15px_rgba(245,158,11,0.15)] text-amber-100"
+                        : "bg-transparent border border-transparent text-amber-200/50 hover:text-amber-200/80 hover:bg-amber-500/5"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between w-full mb-1">
+                      <span className="text-xs font-bold tracking-wide">Sarvam AI</span>
+                      {selectedEngine === "sarvam" ? (
+                        <span className="w-2 h-2 rounded-full bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.9)]" />
+                      ) : (
+                        <span className="text-[10px] text-amber-500/40">Select</span>
+                      )}
+                    </div>
+                    <span className="text-[10px] leading-tight text-amber-200/70">
+                      Indic languages · Hindi accents
+                    </span>
+                  </button>
+                </div>
+              </div>
+
               {/* Your Phone Number (Caller) */}
               <div>
                 <label className="block text-xs text-amber-200/80 mb-2 font-medium tracking-wide flex justify-between items-center">
@@ -378,6 +469,9 @@ export default function DialerPage() {
                 <p className="relative z-10 text-xs text-amber-200/70">
                   Ringing Recipient: <span className="text-white font-mono font-semibold">+91 {clientNumber}</span>
                 </p>
+                <p className="relative z-10 text-[10px] text-amber-300/60 font-mono">
+                  Engine: {selectedEngine === "elevenlabs" ? "ElevenLabs S2S" : "Sarvam AI"}
+                </p>
               </div>
 
               <div className="flex gap-3">
@@ -410,6 +504,9 @@ export default function DialerPage() {
                 <p className="text-amber-200/70 text-xs">
                   Registered Recipient: <span className="text-amber-100 font-mono font-semibold">+91 {clientNumber}</span>
                 </p>
+                <div className="text-[11px] text-amber-300/70 bg-amber-500/10 py-1 px-3 rounded-lg inline-block border border-amber-500/15 font-mono">
+                  Modulation: {selectedEngine === "elevenlabs" ? "ElevenLabs S2S" : "Sarvam AI"}
+                </div>
                 
                 <a
                   href={`tel:${PLIVO_NUMBER}`}
@@ -452,7 +549,7 @@ export default function DialerPage() {
                 <div className="relative z-10 flex items-center justify-center gap-2">
                   <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
                   <span className="text-emerald-300 text-sm font-bold tracking-wide">
-                    Guruji Voice Active
+                    Guruji Voice Active ({selectedEngine === "elevenlabs" ? "ElevenLabs S2S" : "Sarvam AI"})
                   </span>
                 </div>
 
@@ -469,7 +566,9 @@ export default function DialerPage() {
               <div className="grid grid-cols-2 gap-3 text-xs text-center">
                 <div className="bg-amber-500/5 border border-amber-500/10 rounded-xl p-3">
                   <div className="text-amber-400 font-semibold mb-1">Your Voice</div>
-                  <div className="text-amber-200/70">Modulated ➔ Guruji</div>
+                  <div className="text-amber-200/70">
+                    Modulated ➔ Guruji ({selectedEngine === "elevenlabs" ? "ElevenLabs" : "Sarvam"})
+                  </div>
                 </div>
                 <div className="bg-amber-500/5 border border-amber-500/10 rounded-xl p-3">
                   <div className="text-sky-400 font-semibold mb-1">Recipient Voice</div>
@@ -518,7 +617,9 @@ export default function DialerPage() {
             <span>➔</span>
             <span>Voice Server</span>
             <span>➔</span>
-            <span className="text-amber-400 font-semibold">Guruji S2S</span>
+            <span className="text-amber-400 font-semibold">
+              Guruji {selectedEngine === "elevenlabs" ? "S2S (ElevenLabs)" : "STT+TTS (Sarvam)"}
+            </span>
             <span>➔</span>
             <span className="text-amber-300/80">Recipient</span>
           </div>
